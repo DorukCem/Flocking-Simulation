@@ -106,11 +106,11 @@ class Agent:
 
    def wander(self):
       radius = 4
-      future_point = self.get_direction_angle() * 100 + self.position
+      future_point = self.velocity/np.linalg.norm(self.velocity) * 100 + self.position
 
       
       self.wandering_angle += math.cos(random.uniform(0, 2*math.pi))
-      angle = self.wandering_angle + self.get_heading_angle()
+      angle = self.wandering_angle + self.get_direction_angle()
       x,y = radius * math.cos(angle), radius * math.sin(angle)
       wander_point = future_point + [x, y]
       
@@ -119,7 +119,7 @@ class Agent:
    def get_direction_angle(self):
       x, y = self.velocity
       return np.arctan2(y, x)   
-
+   
     
 
 def limit_vector_to_max_value (vector, max_value):
