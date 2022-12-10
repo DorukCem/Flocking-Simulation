@@ -14,12 +14,12 @@ clock = pygame.time.Clock()
 class Agent:
    def __init__(self, x, y):
       self.position = np.array([x, y])
-      self.velocity = np.array([6, 0])
+      self.velocity = np.array([6, 2])
       self.acceleration = np.array([0, 0])
       self.__max_speed = 6 
       self.__max_force = 0.3 
       #In order to wander in random directions
-      self.wandering_angle = math.pi/2
+      self.wandering_angle = math.pi/2 * random.uniform(-1, 1)
 
    
    def update(self):
@@ -46,16 +46,16 @@ class Agent:
       self.acceleration = force_vector.copy()
 
    def draw(self):
-      direction_vector = self.velocity/ np.linalg.norm(self.velocity)
+      agent_direction_vector = self.get_agent_direction_vector_normalized()
   
-      tangent_vector = direction_vector.copy()
+      tangent_vector = agent_direction_vector.copy()
       tangent_vector = np.flip(tangent_vector)
       tangent_vector[0] *= -1
       
       triangle_side_length = 10
       triangle_height = 30
-      p1 = self.position - tangent_vector * triangle_side_length - direction_vector * triangle_height
-      p2 = self.position + tangent_vector * triangle_side_length - direction_vector * triangle_height
+      p1 = self.position - tangent_vector * triangle_side_length - agent_direction_vector * triangle_height
+      p2 = self.position + tangent_vector * triangle_side_length - agent_direction_vector * triangle_height
       p3 = self.position 
       
       pygame.draw.polygon(screen, 'Red', (p1, p2, p3))
@@ -82,7 +82,6 @@ class Agent:
       steer_vector = limit_vector_to_max_value(steer_vector, self.__max_force)
       
       self.apply_force(steer_vector)
-
 
    def pursue(self, target):
       time = 15
@@ -118,9 +117,9 @@ class Agent:
       
       self.seek(wander_point)
 
-   def follow_path(self, path):                                       #Maybe Add a more flexible following radius
+   def follow_path(self, path):                                      
       # Point that is closest to agents future location on given path
-      future_point = self.get_future_location(25)
+      future_point = self.get_future_location(150)
       segment_points = path.points
       closest_normal_point = math.inf
       for i in range(len(segment_points) - 1):
@@ -132,24 +131,56 @@ class Agent:
          if normal_point[0] < point1[0] or normal_point[0] > point2[0]:
             normal_point = point2
       
-         distance = np.linalg.norm(future_point - normal_point)
-         if distance < np.linalg.norm(closest_normal_point):
+         distance_between_agent_and_normal_point = np.linalg.norm(future_point - normal_point)
+         if distance_between_agent_and_normal_point < np.linalg.norm(closest_normal_point):
             closest_normal_point = normal_point
-            self.seek(closest_normal_point) 
 
-         pygame.draw.line(screen, "Blue", future_point, closest_normal_point)
+         if distance_between_agent_and_normal_point < path.radius:
+            self.seek(future_point)
+         else:
+            self.seek(closest_normal_point) 
+        
 
    def get_angle_relative_to_x(self):
       x, y = self.velocity
       return np.arctan2(y, x)
    
-   def get_future_location(self, time):
-      return self.velocity/np.linalg.norm(self.velocity) * time + self.position
+   def get_agent_direction_vector_normalized(self):
+      if np.linalg.norm(self.velocity) == 0:
+         direction =  np.array([1,0])
+      else:
+         direction = self.velocity/np.linalg.norm(self.velocity)
+      return direction
 
-   
+   def get_future_location(self, time):
+      agent_direction_vector = self.get_agent_direction_vector_normalized()
+      return agent_direction_vector * time + self.position
+
+   def seperate(self, other_agents):
+      separation_distance = 30
+      vector_sum_of_nearby_agents = np.array([0, 0]) 
+ 
+      for agent in other_agents:
+         distance_between_agents = np.linalg.norm(agent.position - self.position)
+         if distance_between_agents <= 0 or distance_between_agents > separation_distance: continue
+         
+         relative_position_vector = agent.position - self.position
+         relative_position_vector = relative_position_vector/distance_between_agents
+         vector_sum_of_nearby_agents = relative_position_vector + vector_sum_of_nearby_agents
+      
+
+      if np.linalg.norm(vector_sum_of_nearby_agents) == 0: return
+      vector_sum_normalized = vector_sum_of_nearby_agents/np.linalg.norm(vector_sum_of_nearby_agents)
+      desired_velocity = vector_sum_normalized * self.__max_speed
+      steer_vector = self.velocity - desired_velocity
+      self.apply_force(steer_vector)
+      
+ 
+
+
 class Path:
    def __init__(self):
-      self.radius = 20
+      self.radius = 50
       self.points = []
 
    def draw(self):
@@ -177,16 +208,15 @@ def closest_point_on_line_to_point(point, line_start, line_end):
    return a + projection_vector
    
 
-agent = Agent(1000, 600)
-target = Agent(300,200)
 
+
+#agent = Agent(1000, 600)
+#target = Agent(300,200)
+agents = [Agent(random.randint(0, WIDTH), random.randint(0, HEIGHT)) for i in range(30)]
 path = Path()
 path.add_point(0, HEIGHT/3)
-path.add_point(WIDTH/3, 2*HEIGHT/3)
 path.add_point(WIDTH/2, HEIGHT/2)
-path.add_point(WIDTH, HEIGHT/4)
-
-
+path.add_point(WIDTH, HEIGHT/2)
 
 while True:
 
@@ -196,19 +226,18 @@ while True:
          exit()
 
    screen.fill((0,0,0))
-   agent.draw()
 
    path.draw()
+   for agent in agents:
+      agent.follow_path(path)
+      agent.seperate(agents)
+      agent.update()
+      agent.draw()
 
-   #target.position = pygame.mouse.get_pos()
-   #target.update()
-   #target.draw()
-   
-   agent.follow_path(path)
-   agent.update()
-
-   
+  
 
    pygame.display.update()
    clock.tick(60)
 
+
+#If it is seeking a path and tryingy to sepearte the velocity change creates twitching
