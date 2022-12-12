@@ -30,13 +30,24 @@ class Agent: #Random starting velocity
       self.color = random.choice([BLUE, PINK])
       self.friends = []
 
-      
+   def add_force(self, force, force_weight):
+      self.forces_to_be_apllied.append((force, force_weight))
+
+   def apply_force(self):
+      sum_vector = np.array([0, 0])
+      for force, weight in self.forces_to_be_apllied:
+         sum_vector = sum_vector + force * weight
+      force_vector = limit_vector_to_max_value(sum_vector, self.max_force)
+      # F = ma but m is cosntant so F directly affects a
+      self.acceleration = self.acceleration + force_vector
+      self.forces_to_be_apllied.clear()
+
    def update(self):
       self.apply_force()
       self.velocity = self.velocity + self.acceleration
       self.velocity = limit_vector_to_max_value(self.velocity, self.max_speed)
       self.position = self.position + self.velocity 
-      #accelartion is set each frame according to the force applied
+      #acceleration is set each frame according to the force that is applied
       #if the is no force applied on that frame the acceleraton is 0
       self.acceleration = self.acceleration * 0
 
@@ -49,19 +60,6 @@ class Agent: #Random starting velocity
          self.position[1] = self.position[1] - HEIGHT
       if self.position[1] < 0:
          self.position[1] = self.position[1] + HEIGHT
-
-   def add_force(self, force, force_weight):
-      self.forces_to_be_apllied.append((force, force_weight))
-
-   def apply_force(self):
-      #F = ma but we dont care about m
-      sum_vector = np.array([0, 0])
-      for force, weight in self.forces_to_be_apllied:
-         sum_vector = sum_vector + force * weight
-      force_vector = limit_vector_to_max_value(sum_vector, self.max_force)
-
-      self.acceleration = self.acceleration + force_vector
-      self.forces_to_be_apllied.clear()
 
    def draw(self): 
       agent_direction_vector = self.get_agent_direction_vector_normalized()
@@ -88,11 +86,10 @@ class Agent: #Random starting velocity
          if  distance < friend_distance: 
             self.friends.append(agent)
          
-
-   def seek(self, target):
+   #Agents seeks a target
+   def get_seeking_force(self, target):
       direction_vector = target - self.position
-      distance = np.linalg.norm(direction_vector)
-      direction_vector_normalized =  direction_vector/distance
+      direction_vector_normalized =  normalize_vector(direction_vector)
       desired_velocity = self.max_speed * direction_vector_normalized 
       
       steer_vector = desired_velocity - self.velocity
@@ -100,103 +97,98 @@ class Agent: #Random starting velocity
       
       return steer_vector
 
-   def wander(self):
+   #Agent wanders randomly 
+   def get_wandering_force(self):
       #The agent follows a point on a circle 
       #The point moves randomly around the circle
       circle_radius = 4
       future_point = self.get_future_location(100)
       self.wandering_angle += random.uniform(-0.2,0.2)
-      #self.wandering_angle += math.cos(random.uniform(0, 2*math.pi))
       angle = self.wandering_angle + self.get_angle_relative_to_x()
       x,y = circle_radius * math.cos(angle), circle_radius * math.sin(angle)
       wander_point = future_point + [x, y]
       
-      return self.seek(wander_point)
+      return self.get_seeking_force(wander_point)
 
-   def seperate(self):
+   #Agents try not to bump into each other
+   def get_seperation_force(self):
          separation_distance = 30
          vector_sum_of_nearby_agents = np.array([0, 0]) 
-   
+
+         #accumulate the relative positions of enarby agents as a vector
          for agent in self.friends:
-            distance_between_agents = np.linalg.norm(agent.position - self.position)
-            if distance_between_agents == 0 or distance_between_agents > separation_distance: continue
-            
             relative_position_vector = agent.position - self.position
-            relative_position_vector = relative_position_vector/distance_between_agents
-            vector_sum_of_nearby_agents = relative_position_vector + vector_sum_of_nearby_agents
+            distance_between_agents = magnitude_of_vector(relative_position_vector)
+            if distance_between_agents == 0 or distance_between_agents > separation_distance: 
+               continue
+            #The vector gets smaller as the target is farther away
+            vector_sum_of_nearby_agents =  vector_sum_of_nearby_agents + relative_position_vector/distance_between_agents 
          
-         if np.linalg.norm(vector_sum_of_nearby_agents) == 0: return np.array([0, 0])
-         vector_sum_normalized = vector_sum_of_nearby_agents/np.linalg.norm(vector_sum_of_nearby_agents)
+         #steer away from the accumulated position
+         if magnitude_of_vector(vector_sum_of_nearby_agents) == 0:
+            return np.array([0, 0])
+         vector_sum_normalized = normalize_vector(vector_sum_of_nearby_agents)
          desired_velocity = vector_sum_normalized * self.max_speed
          steer_vector = self.velocity - desired_velocity
          steer_vector = limit_vector_to_max_value(steer_vector, self.max_force)
          
          return steer_vector
 
-
-   def align(self):
-
+   #Agents try to allign
+   def get_alignment_force(self):
       vector_sum = np.array([0, 0])
-      
       for agent in self.friends:
          if self.color != agent.color: continue
+         #The agent will try to steer in the average direction of nearby agents
          vector_sum = vector_sum + agent.velocity
       
-      if np.linalg.norm(vector_sum) == 0: return vector_sum
-
-      sum_normalized = vector_sum/np.linalg.norm(vector_sum)
+      if magnitude_of_vector(vector_sum) == 0:
+         return vector_sum
+      sum_normalized = normalize_vector(vector_sum)
       desired_velocity = sum_normalized * self.max_speed
 
       steer_vector = desired_velocity - self.velocity
       steer_vector = limit_vector_to_max_value(steer_vector, self.max_force)
       return steer_vector
 
-   def cohesion(self):
+   #Agents try to stay together
+   def get_cohesion_force(self):
       vector_sum = np.array([0, 0])
       count = 0
       
       for agent in self.friends:
          if self.color != agent.color: continue
+         #agent will try to steer toward the average position of naerby agents
          vector_sum = vector_sum + agent.position
          count += 1
       if count == 0: return vector_sum
 
       average_vector = vector_sum/count
-      return self.seek(average_vector)
+      return self.get_seeking_force(average_vector)
 
 
    def flock(self):
-      seperation_vector = self.seperate()
-      algnment_vector = self.align()
-      cohesion_vector = self.cohesion()
-      wandering_vector = self.wander()
+      seperation_force = self.get_seperation_force()
+      algnment_force = self.get_alignment_force()
+      cohesion_force = self.get_cohesion_force()
+      wandering_force = self.get_wandering_force()
 
-      self.add_force(seperation_vector, 5)
-      self.add_force(algnment_vector, 1)
-      self.add_force(cohesion_vector, 0.25)
-      self.add_force(wandering_vector, 1)
+      self.add_force(seperation_force, 5)
+      self.add_force(algnment_force, 1)
+      self.add_force(cohesion_force, 0.25)
+      self.add_force(wandering_force, 1)
 
-   def flee(self):
-      vector_sum = np.array([0, 0])
-      count = 0
-      for agent in self.nearby_enemies:
-         vector_sum = vector_sum + agent.position
-         count += 1
-    
-      average_vector = self.max_speed * vector_sum/count
-      seek_vector = self.seek(-average_vector)
-      self.add_force(seek_vector, 1)
-   
 
    def get_angle_relative_to_x(self):
       x, y = self.velocity
       return np.arctan2(y, x)
    
+   #The direction that the agent is heading
    def get_agent_direction_vector_normalized(self):
-      if np.linalg.norm(self.velocity) == 0:
+      if magnitude_of_vector(self.velocity) == 0:
          direction =  np.array([1,0])
       else:
-         direction = self.velocity/np.linalg.norm(self.velocity)
+         direction = normalize_vector(self.velocity)
       return direction
 
    def get_future_location(self, time):
@@ -213,15 +205,11 @@ def limit_vector_to_max_value (vector, max_value):
       vector = multiplier * vector
    return vector
 
-def closest_point_on_line_to_point(point, line_start, line_end):
-   p, a, b, = point, line_start, line_end
-   ap = p - a
-   ab = b - a
-   ab_norm = ab/np.linalg.norm(ab)
-   projection_vector = ap.dot(ab_norm) * ab_norm
-   return a + projection_vector
+def magnitude_of_vector(vector):
+   return np.linalg.norm(vector)
 
-
+def normalize_vector(vector):
+   return vector/magnitude_of_vector(vector)
 
 agents = [Agent(random.randint(0, WIDTH), random.randint(0, HEIGHT)) for i in range(40)] 
 #agents = [Agent(400+i,400+i) for i in range(30)]
